@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Spiral Project — Fibonacci</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #010208; overflow: hidden; width: 100vw; height: 100vh; }
+    canvas { display: block; position: absolute; top: 0; left: 0; }
+    #hud {
+      position: fixed; inset: 0; pointer-events: none;
+      font-family: 'Courier New', Courier, monospace;
+    }
+    #tl {
+      position: absolute; top: 24px; left: 24px;
+      color: rgba(255,155,20,0.55);
+      font-size: 10px; letter-spacing: 0.22em; line-height: 2.4;
+      text-transform: uppercase;
+    }
+    #key {
+      position: absolute; top: 24px; right: 24px;
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .krow {
+      display: flex; align-items: center; gap: 7px;
+      font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase;
+      color: rgba(255,255,255,0.42);
+    }
+    .kswatch {
+      width: 10px; height: 10px; border-radius: 2px;
+      border: 1px solid rgba(255,255,255,0.18);
+    }
+    #br {
+      position: absolute; bottom: 24px; right: 28px;
+      color: rgba(255,155,20,0.13);
+      font-size: 54px; font-style: italic;
+    }
+    #bl {
+      position: absolute; bottom: 24px; left: 24px;
+      color: rgba(255,255,255,0.12);
+      font-size: 9px; letter-spacing: 0.22em; text-transform: uppercase;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="hud">
+    <div id="tl">
+      The Spiral Project<br>
+      φ = 1.61803398875<br>
+      1 · 1 · 2 · 3 · 5 · 8 · 13 · 21 · 34 · 55
+    </div>
+    <div id="key"></div>
+    <div id="br">φ</div>
+    <div id="bl">resistor colour code · loops forever · click to restart</div>
+  </div>
+
+  <script>
+  (function () {
+    const canvas = document.getElementById('c');
+    const ctx    = canvas.getContext('2d');
+    const N      = 10;
+
+    // ── IEC 60062 Resistor Colour Code — the universal numbered colour system ──
+    // Position 0–9 each has a fixed internationally standardised colour.
+    const RCC = [
+      { name:'Black',  rgb:[30,  30,  40 ], text:[200,200,255] },
+      { name:'Brown',  rgb:[180, 80,  10 ], text:[255,225,170] },
+      { name:'Red',    rgb:[255, 20,  20 ], text:[255,210,210] },
+      { name:'Orange', rgb:[255, 140, 0  ], text:[255,245,210] },
+      { name:'Yellow', rgb:[255, 245, 0  ], text:[60,  50,  0  ] },
+      { name:'Green',  rgb:[0,   230, 80 ], text:[180,255,200] },
+      { name:'Blue',   rgb:[30,  100, 255], text:[180,220,255] },
+      { name:'Violet', rgb:[180, 0,   255], text:[240,200,255] },
+      { name:'Cyan',   rgb:[0,   240, 255], text:[0,   55,  65 ] },
+      { name:'Magenta',rgb:[255, 0,   200], text:[255, 200, 245] },
+    ];
+
+    // Build key legend
+    const keyEl = document.getElementById('key');
+    RCC.forEach((c,i) => {
+      const row = document.createElement('div');
+      row.className = 'krow';
+      const sw = document.createElement('div');
+      sw.className = 'kswatch';
+      sw.style.background = `rgb(${c.rgb.join(',')})`;
+      row.appendChild(sw);
+      row.appendChild(document.createTextNode(`${i} · ${c.name}`));
+      keyEl.appendChild(row);
+    });
+
+    // ── Fibonacci squares layout ──────────────────────────────────────────────
+    function buildData() {
+      const fibs = [1,1];
+      for (let i=2; i<N; i++) fibs.push(fibs[i-1]+fibs[i-2]);
+      const DIRS = ['down','right','up','left'];
+      const sqs  = [
+        {x:0,y:0,size:1,dir:'down'},
+        {x:1,y:0,size:1,dir:'right'}
+      ];
+      let x0=0,y0=0,x1=2,y1=1;
+      for (let i=2; i<N; i++) {
+        const f=fibs[i], d=DIRS[i%4], sq={size:f,dir:d};
+        if (d==='up'   ){sq.x=x0;   sq.y=y0-f; y0-=f;}
+        if (d==='left' ){sq.x=x0-f; sq.y=y0;   x0-=f;}
+        if (d==='down' ){sq.x=x0;   sq.y=y1;   y1+=f;}
+        if (d==='right'){sq.x=x1;   sq.y=y0;   x1+=f;}
+        sqs.push(sq);
+      }
+      return {sqs,fibs,bounds:{x0,y0,x1,y1}};
+    }
+
+    function arcOf(sq) {
+      const s=sq.size;
+      switch(sq.dir){
+        case 'down':  return {cx:sq.x+s,cy:sq.y,   a0:Math.PI,    a1:Math.PI/2};
+        case 'right': return {cx:sq.x,  cy:sq.y,   a0:Math.PI/2,  a1:0};
+        case 'up':    return {cx:sq.x,  cy:sq.y+s, a0:0,          a1:-Math.PI/2};
+        case 'left':  return {cx:sq.x+s,cy:sq.y+s, a0:-Math.PI/2, a1:-Math.PI};
+      }
+    }
+
+    // ── State ─────────────────────────────────────────────────────────────────
+    let W,H,sc,ox,oy,data;
+    let prog=0,globalAlpha=1,phase='fadein';
+    let holdTimer=0,lastT=null,stars=[],particles=[];
+    let raf=null;
+
+    const MAXP = ()=>(N-1)*0.9+1;
+    const px = u=>ox+u*sc;
+    const py = u=>oy+u*sc;
+
+    function setup() {
+      W=canvas.width =window.innerWidth;
+      H=canvas.height=window.innerHeight;
+      data=buildData();
+      const {x0,y0,x1,y1}=data.bounds;
+      const bw=x1-x0,bh=y1-y0;
+      sc=Math.min(W/bw,H/bh)*0.80;
+      ox=W/2-(x0+bw/2)*sc;
+      oy=H/2-(y0+bh/2)*sc;
+      stars=Array.from({length:200},()=>({
+        x:Math.random()*W, y:Math.random()*H,
+        r:Math.random()*1.4+0.2,
+        a:Math.random()*0.4+0.08,
+        p:Math.random()*Math.PI*2
+      }));
+      particles=[];
+    }
+
+    function resetCycle() {
+      prog=0; lastT=null; holdTimer=0;
+      phase='fadein'; globalAlpha=0; particles=[];
+    }
+
+    // ── Drawing ───────────────────────────────────────────────────────────────
+    function drawBg(t) {
+      ctx.fillStyle='#010208';
+      ctx.fillRect(0,0,W,H);
+      stars.forEach(s=>{
+        const a=s.a*(0.55+0.45*Math.sin(s.p+t*0.00065))*globalAlpha;
+        ctx.beginPath();
+        ctx.arc(s.x,s.y,s.r,0,Math.PI*2);
+        ctx.fillStyle=`rgba(180,205,255,${a})`;
+        ctx.fill();
+      });
+    }
+
+    function drawBlocks() {
+      data.sqs.forEach((sq,i)=>{
+        const arcStart=i*0.9;
+        const reveal=Math.max(0,Math.min(1,(prog-arcStart)/0.9));
+        if (reveal<=0) return;
+
+        const col=RCC[i];
+        const [r,g,b]=col.rgb;
+        const [tr,tg,tb]=col.text;
+        const px_=px(sq.x), py_=py(sq.y), ps=sq.size*sc;
+        const a=reveal*0.52*globalAlpha;
+
+        ctx.fillStyle=`rgba(${r},${g},${b},${a})`;
+        ctx.fillRect(px_,py_,ps,ps);
+
+        ctx.strokeStyle=`rgba(${r},${g},${b},${Math.min(1,a*2.4)})`;
+        ctx.lineWidth=1;
+        ctx.strokeRect(px_,py_,ps,ps);
+
+
+      });
+    }
+
+    function drawSpiral() {
+      data.sqs.forEach((sq,i)=>{
+        const arcProg=Math.max(0,Math.min(1,(prog-i*0.9)/0.9));
+        if (arcProg<=0) return;
+
+        const arc=arcOf(sq);
+        const r=sq.size*sc;
+        const cx=px(arc.cx), cy=py(arc.cy);
+        const end=arc.a0+(arc.a1-arc.a0)*arcProg;
+        const col=RCC[i];
+        const [cr,cg,cb]=col.rgb;
+        const lw=Math.max(1.5,5-i*0.32);
+
+        // Glow pass
+        ctx.beginPath();
+        ctx.arc(cx,cy,r,arc.a0,end,true);
+        ctx.strokeStyle=`rgba(${cr},${cg},${cb},${0.9*globalAlpha})`;
+        ctx.lineWidth=lw+3;
+        ctx.shadowColor=`rgba(${cr},${cg},${cb},0.9)`;
+        ctx.shadowBlur=22;
+        ctx.stroke();
+
+        // Bright core
+        ctx.beginPath();
+        ctx.arc(cx,cy,r,arc.a0,end,true);
+        ctx.strokeStyle=`rgba(255,255,255,${0.32*globalAlpha})`;
+        ctx.lineWidth=Math.max(0.5,lw*0.32);
+        ctx.shadowBlur=0;
+        ctx.stroke();
+        ctx.shadowBlur=0;
+
+        // Tip
+        if (arcProg<1 && i===Math.min(N-1,Math.floor(prog/0.9))) {
+          const tx=cx+r*Math.cos(end);
+          const ty=cy+r*Math.sin(end);
+          if (Math.random()<0.4) {
+            particles.push({
+              x:tx,y:ty,
+              vx:(Math.random()-0.5)*3.5,
+              vy:(Math.random()-0.5)*3.5,
+              life:1,
+              size:Math.random()*3+1,
+              col:[cr,cg,cb]
+            });
+          }
+          ctx.beginPath();
+          ctx.arc(tx,ty,6,0,Math.PI*2);
+          ctx.fillStyle=`rgba(255,255,220,${globalAlpha})`;
+          ctx.shadowColor='rgba(255,230,80,1)';
+          ctx.shadowBlur=28;
+          ctx.fill();
+          ctx.shadowBlur=0;
+        }
+      });
+    }
+
+    function drawParticles() {
+      particles=particles.filter(p=>p.life>0.02);
+      particles.forEach(p=>{
+        p.x+=p.vx; p.y+=p.vy;
+        p.vx*=0.91; p.vy*=0.91;
+        p.life-=0.022;
+        const [r,g,b]=p.col;
+        ctx.beginPath();
+        ctx.arc(p.x,p.y,p.size*p.life,0,Math.PI*2);
+        ctx.fillStyle=`rgba(${r},${g},${b},${p.life*0.6*globalAlpha})`;
+        ctx.fill();
+      });
+    }
+
+    // ── Loop ──────────────────────────────────────────────────────────────────
+    function frame(t) {
+      if (!lastT) lastT=t;
+      const dt=Math.min((t-lastT)/1000,0.05);
+      lastT=t;
+      const mp=MAXP();
+
+      if (phase==='fadein') {
+        globalAlpha=Math.min(1,globalAlpha+dt*1.1);
+        prog=Math.min(0.6,prog+dt*1.6);
+        if (globalAlpha>=1) phase='draw';
+      }
+      else if (phase==='draw') {
+        prog=Math.min(mp,prog+dt*1.6);
+        if (prog>=mp) { phase='hold'; holdTimer=0; }
+      }
+      else if (phase==='hold') {
+        holdTimer+=dt;
+        if (holdTimer>2.2) phase='fadeout';
+      }
+      else if (phase==='fadeout') {
+        globalAlpha=Math.max(0,globalAlpha-dt*0.85);
+        if (globalAlpha<=0) { setup(); resetCycle(); }
+      }
+
+      drawBg(t);
+      drawBlocks();
+      drawSpiral();
+      drawParticles();
+      raf=requestAnimationFrame(frame);
+    }
+
+    function start() {
+      if (raf) cancelAnimationFrame(raf);
+      setup(); resetCycle();
+      raf=requestAnimationFrame(frame);
+    }
+
+    window.addEventListener('resize', start);
+    canvas.addEventListener('click',  start);
+    start();
+  })();
+  </script>
+</body>
+</html>
