@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>The Spiral Project — AR</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #000; }
+    #overlay {
+      position: fixed; inset: 0; z-index: 999;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.88);
+      font-family: 'Courier New', monospace;
+      color: rgba(255,155,20,0.85);
+      font-size: 11px; letter-spacing: 0.22em;
+      text-transform: uppercase; text-align: center;
+      gap: 16px; pointer-events: none;
+      transition: opacity 0.6s;
+    }
+    #overlay.hidden { opacity: 0; }
+    #scan-ring {
+      width: 160px; height: 160px; border-radius: 50%;
+      border: 2px solid rgba(255,155,20,0.5);
+      animation: pulse 1.8s ease-in-out infinite;
+      display: flex; align-items: center; justify-content: center;
+    }
+    #scan-ring::after {
+      content: 'φ';
+      font-size: 48px; font-style: italic;
+      color: rgba(255,155,20,0.4);
+    }
+    @keyframes pulse {
+      0%,100% { transform: scale(1);   opacity: 0.5; }
+      50%      { transform: scale(1.1); opacity: 1;   }
+    }
+    #status {
+      position: fixed; bottom: 24px; left: 0; right: 0;
+      text-align: center;
+      font-family: 'Courier New', monospace;
+      font-size: 9px; letter-spacing: 0.22em;
+      color: rgba(255,255,255,0.25);
+      text-transform: uppercase; z-index: 998;
+      pointer-events: none;
+    }
+  </style>
+
+  <!-- MindAR + A-Frame -->
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+</head>
+<body>
+
+  <!-- Scanning overlay -->
+  <div id="overlay">
+    <div id="scan-ring"></div>
+    <div>Point camera at the spiral target</div>
+  </div>
+  <div id="status">the spiral project · ar</div>
+
+  <!-- Off-screen canvas where we animate the spiral -->
+  <canvas id="spiral-canvas" width="1024" height="1024"
+    style="display:none; position:absolute;"></canvas>
+
+  <!-- A-Frame AR Scene -->
+  <a-scene
+    mindar-image="imageTargetSrc: targets.mind; autoStart: true; uiLoading: no; uiScanning: no; uiError: no;"
+    color-space="sRGB"
+    renderer="colorManagement: true, physicallyCorrectLights: true"
+    vr-mode-ui="enabled: false"
+    device-orientation-permission-ui="enabled: false">
+
+    <a-assets>
+      <!-- Canvas texture registered as an asset -->
+      <canvas id="ar-canvas" width="1024" height="1024"></canvas>
+    </a-assets>
+
+    <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+
+    <!-- This entity appears when the target is found -->
+    <a-entity mindar-image-target="targetIndex: 0">
+      <!-- Flat plane that shows the animated spiral canvas -->
+      <a-plane
+        id="spiral-plane"
+        position="0 0 0"
+        rotation="0 0 0"
+        width="1" height="1"
+        material="src: #ar-canvas; transparent: true; depthWrite: false; side: double;">
+      </a-plane>
+    </a-entity>
+  </a-scene>
+
+  <script>
+  (function(){
+    // ── Spiral animation on off-screen canvas ─────────────────────────────
+    const sc   = document.getElementById('ar-canvas');
+    const ctx  = sc.getContext('2d');
+    const SIZE = 1024;
+    const N    = 10;
+
+    const RCC = [
+      {rgb:[30,  30,  40 ]},
+      {rgb:[180, 80,  10 ]},
+      {rgb:[255, 20,  20 ]},
+      {rgb:[255, 140, 0  ]},
+      {rgb:[255, 245, 0  ]},
+      {rgb:[0,   230, 80 ]},
+      {rgb:[30,  100, 255]},
+      {rgb:[180, 0,   255]},
+      {rgb:[0,   240, 255]},
+      {rgb:[255, 0,   200]},
+    ];
+
+    function buildData(){
+      const fibs=[1,1];
+      for(let i=2;i<N;i++) fibs.push(fibs[i-1]+fibs[i-2]);
+      const DIRS=['down','right','up','left'];
+      const sqs=[{x:0,y:0,size:1,dir:'down'},{x:1,y:0,size:1,dir:'right'}];
+      let x0=0,y0=0,x1=2,y1=1;
+      for(let i=2;i<N;i++){
+        const f=fibs[i],d=DIRS[i%4],sq={size:f,dir:d};
+        if(d==='up'   ){sq.x=x0;   sq.y=y0-f; y0-=f;}
+        if(d==='left' ){sq.x=x0-f; sq.y=y0;   x0-=f;}
+        if(d==='down' ){sq.x=x0;   sq.y=y1;   y1+=f;}
+        if(d==='right'){sq.x=x1;   sq.y=y0;   x1+=f;}
+        sqs.push(sq);
+      }
+      return{sqs,fibs,bounds:{x0,y0,x1,y1}};
+    }
+
+    function arcOf(sq){
+      const s=sq.size;
+      switch(sq.dir){
+        case'down':  return{cx:sq.x+s,cy:sq.y,   a0:Math.PI,    a1:Math.PI/2};
+        case'right': return{cx:sq.x,  cy:sq.y,   a0:Math.PI/2,  a1:0};
+        case'up':    return{cx:sq.x,  cy:sq.y+s, a0:0,          a1:-Math.PI/2};
+        case'left':  return{cx:sq.x+s,cy:sq.y+s, a0:-Math.PI/2, a1:-Math.PI};
+      }
+    }
+
+    const data  = buildData();
+    const {x0,y0,x1,y1} = data.bounds;
+    const bw=x1-x0, bh=y1-y0;
+    const scale = Math.min(SIZE/bw, SIZE/bh)*0.82;
+    const ox    = SIZE/2-(x0+bw/2)*scale;
+    const oy    = SIZE/2-(y0+bh/2)*scale;
+    const px    = u=>ox+u*scale;
+    const py    = u=>oy+u*scale;
+
+    const MAXP  = (N-1)*0.9+1;
+    let prog=0, phase='draw', holdTimer=0, globalA=0, lastT=null, particles=[];
+
+    function resetCycle(){prog=0;phase='fadein';globalA=0;holdTimer=0;particles=[];}
+    resetCycle();
+
+    // Track found/lost for overlay
+    const overlay = document.getElementById('overlay');
+    let targetVisible = false;
+
+    document.querySelector('[mindar-image-target]').addEventListener('targetFound', ()=>{
+      targetVisible=true;
+      overlay.classList.add('hidden');
+      setTimeout(()=>{ overlay.style.display='none'; },700);
+    });
+    document.querySelector('[mindar-image-target]').addEventListener('targetLost', ()=>{
+      targetVisible=false;
+      overlay.style.display='flex';
+      setTimeout(()=>{ overlay.classList.remove('hidden'); },50);
+    });
+
+    // ── Canvas render loop ─────────────────────────────────────────────────
+    let needsUpdate = true; // always update so texture stays live
+
+    function drawFrame(t){
+      if(!lastT) lastT=t;
+      const dt=Math.min((t-lastT)/1000,0.05);
+      lastT=t;
+
+      if(phase==='fadein'){
+        globalA=Math.min(1,globalA+dt*1.1);
+        prog=Math.min(0.6,prog+dt*1.6);
+        if(globalA>=1) phase='draw';
+      } else if(phase==='draw'){
+        prog=Math.min(MAXP,prog+dt*1.4);
+        if(prog>=MAXP){phase='hold';holdTimer=0;}
+      } else if(phase==='hold'){
+        holdTimer+=dt;
+        if(holdTimer>2.5) phase='fadeout';
+      } else if(phase==='fadeout'){
+        globalA=Math.max(0,globalA-dt*0.9);
+        if(globalA<=0) resetCycle();
+      }
+
+      // Clear transparent
+      ctx.clearRect(0,0,SIZE,SIZE);
+
+      // Draw blocks
+      data.sqs.forEach((sq,i)=>{
+        const reveal=Math.max(0,Math.min(1,(prog-i*0.9)/0.9));
+        if(reveal<=0) return;
+        const[r,g,b]=RCC[i].rgb;
+        const ps=sq.size*scale;
+        const px_=px(sq.x), py_=py(sq.y);
+        const a=reveal*0.45*globalA;
+        ctx.fillStyle=`rgba(${r},${g},${b},${a})`;
+        ctx.fillRect(px_,py_,ps,ps);
+        ctx.strokeStyle=`rgba(${r},${g},${b},${Math.min(1,a*3)})`;
+        ctx.lineWidth=2;
+        ctx.strokeRect(px_,py_,ps,ps);
+      });
+
+      // Draw spiral
+      data.sqs.forEach((sq,i)=>{
+        const arcProg=Math.max(0,Math.min(1,(prog-i*0.9)/0.9));
+        if(arcProg<=0) return;
+        const arc=arcOf(sq);
+        const r=sq.size*scale;
+        const cx_=px(arc.cx), cy_=py(arc.cy);
+        const end=arc.a0+(arc.a1-arc.a0)*arcProg;
+        const[cr,cg,cb]=RCC[i].rgb;
+        const lw=Math.max(3,10-i*0.6);
+
+        ctx.beginPath();
+        ctx.arc(cx_,cy_,r,arc.a0,end,true);
+        ctx.strokeStyle=`rgba(${cr},${cg},${cb},${0.95*globalA})`;
+        ctx.lineWidth=lw+4;
+        ctx.shadowColor=`rgba(${cr},${cg},${cb},1)`;
+        ctx.shadowBlur=40;
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(cx_,cy_,r,arc.a0,end,true);
+        ctx.strokeStyle=`rgba(255,255,255,${0.35*globalA})`;
+        ctx.lineWidth=Math.max(1,lw*0.3);
+        ctx.shadowBlur=0;
+        ctx.stroke();
+        ctx.shadowBlur=0;
+
+        // Tip glow
+        if(arcProg<1&&i===Math.min(N-1,Math.floor(prog/0.9))){
+          const tx=cx_+r*Math.cos(end), ty=cy_+r*Math.sin(end);
+          if(Math.random()<0.4){
+            particles.push({x:tx,y:ty,vx:(Math.random()-0.5)*6,vy:(Math.random()-0.5)*6,life:1,size:Math.random()*5+2,col:[cr,cg,cb]});
+          }
+          ctx.beginPath();
+          ctx.arc(tx,ty,10,0,Math.PI*2);
+          ctx.fillStyle=`rgba(255,255,220,${globalA})`;
+          ctx.shadowColor='rgba(255,230,80,1)';
+          ctx.shadowBlur=40;
+          ctx.fill();
+          ctx.shadowBlur=0;
+        }
+      });
+
+      // Particles
+      particles=particles.filter(p=>p.life>0.02);
+      particles.forEach(p=>{
+        p.x+=p.vx;p.y+=p.vy;p.vx*=0.9;p.vy*=0.9;p.life-=0.022;
+        const[r,g,b]=p.col;
+        ctx.beginPath();
+        ctx.arc(p.x,p.y,p.size*p.life,0,Math.PI*2);
+        ctx.fillStyle=`rgba(${r},${g},${b},${p.life*0.6*globalA})`;
+        ctx.fill();
+      });
+
+      // Tell A-Frame the texture needs refreshing
+      const plane = document.getElementById('spiral-plane');
+      if(plane && plane.components && plane.components.material){
+        const mat = plane.components.material.material;
+        if(mat && mat.map){ mat.map.needsUpdate = true; }
+      }
+
+      requestAnimationFrame(drawFrame);
+    }
+
+    // Start after A-Frame is ready
+    document.querySelector('a-scene').addEventListener('loaded', ()=>{
+      // Register canvas as texture source on the plane
+      const plane = document.getElementById('spiral-plane');
+      plane.setAttribute('material', 'src', sc);
+      requestAnimationFrame(drawFrame);
+    });
+
+  })();
+  </script>
+</body>
+</html>
