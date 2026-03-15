@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>The Spiral Project — AR</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { background:#000; overflow:hidden; width:100vw; height:100vh; font-family:'Courier New',monospace; }
+
+    #tap-start {
+      position:fixed; inset:0; z-index:9999;
+      background:#010208;
+      display:flex; flex-direction:column;
+      align-items:center; justify-content:center; gap:32px;
+      cursor:pointer;
+    }
+    #tap-start .phi { font-size:100px; font-style:italic; color:rgba(255,155,20,0.2); line-height:1; }
+    #tap-start .btn {
+      border:1.5px solid rgba(255,155,20,0.6);
+      border-radius:50px; padding:18px 48px;
+      font-size:12px; letter-spacing:0.3em;
+      color:rgba(255,155,20,0.9); text-transform:uppercase;
+      animation:pulse 2s ease-in-out infinite;
+    }
+    #tap-start .sub {
+      font-size:9px; letter-spacing:0.18em;
+      color:rgba(255,255,255,0.22); text-transform:uppercase;
+      text-align:center; max-width:280px; line-height:2;
+    }
+    @keyframes pulse {
+      0%,100%{box-shadow:0 0 0 0 rgba(255,155,20,0.2);}
+      50%{box-shadow:0 0 0 12px rgba(255,155,20,0);}
+    }
+
+    #overlay {
+      position:fixed; inset:0; z-index:100;
+      display:flex; flex-direction:column;
+      align-items:center; justify-content:center;
+      pointer-events:none; gap:20px;
+      transition:opacity 0.5s;
+    }
+    #overlay.hidden{opacity:0;}
+    .ring {
+      width:180px; height:180px; border-radius:50%;
+      border:1.5px solid rgba(255,155,20,0.45);
+      animation:ringpulse 2s ease-in-out infinite;
+      display:flex; align-items:center; justify-content:center;
+    }
+    .phi-big{font-size:52px;font-style:italic;color:rgba(255,155,20,0.3);}
+    .ring-label{font-size:11px;letter-spacing:0.22em;color:rgba(255,155,20,0.7);text-transform:uppercase;}
+    @keyframes ringpulse{
+      0%,100%{transform:scale(1);border-color:rgba(255,155,20,0.3);}
+      50%{transform:scale(1.06);border-color:rgba(255,155,20,0.7);}
+    }
+    #status{
+      position:fixed;bottom:20px;left:0;right:0;text-align:center;
+      font-size:9px;letter-spacing:0.22em;color:rgba(255,255,255,0.2);
+      text-transform:uppercase;z-index:101;pointer-events:none;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="tap-start">
+    <div class="phi">φ</div>
+    <div class="btn">Tap to Open Camera</div>
+    <div class="sub">You will be asked to allow camera access<br>Tap Allow to start the AR experience</div>
+  </div>
+
+  <div id="overlay" style="display:none;">
+    <div class="ring"><div class="phi-big">φ</div></div>
+    <div class="ring-label">Point at target</div>
+  </div>
+  <div id="status">the spiral project · ar</div>
+
+  <canvas id="ar-canvas" width="1024" height="1024" style="display:none;"></canvas>
+
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+
+  <!-- A-Frame scene injected after tap -->
+  <div id="scene-container"></div>
+
+  <script>
+  (function(){
+
+    // ── Spiral data ───────────────────────────────────────────────────────
+    const N   = 10;
+    const RCC = [
+      [30,30,40],[180,80,10],[255,20,20],[255,140,0],[255,245,0],
+      [0,230,80],[30,100,255],[180,0,255],[0,240,255],[255,0,200]
+    ];
+
+    function buildData(){
+      const fibs=[1,1];
+      for(let i=2;i<N;i++) fibs.push(fibs[i-1]+fibs[i-2]);
+      const DIRS=['down','right','up','left'];
+      const sqs=[{x:0,y:0,size:1,dir:'down'},{x:1,y:0,size:1,dir:'right'}];
+      let x0=0,y0=0,x1=2,y1=1;
+      for(let i=2;i<N;i++){
+        const f=fibs[i],d=DIRS[i%4],sq={size:f,dir:d};
+        if(d==='up'){sq.x=x0;sq.y=y0-f;y0-=f;}
+        if(d==='left'){sq.x=x0-f;sq.y=y0;x0-=f;}
+        if(d==='down'){sq.x=x0;sq.y=y1;y1+=f;}
+        if(d==='right'){sq.x=x1;sq.y=y0;x1+=f;}
+        sqs.push(sq);
+      }
+      return{sqs,bounds:{x0,y0,x1,y1}};
+    }
+    function arcOf(sq){
+      const s=sq.size;
+      switch(sq.dir){
+        case'down': return{cx:sq.x+s,cy:sq.y,a0:Math.PI,a1:Math.PI/2};
+        case'right':return{cx:sq.x,cy:sq.y,a0:Math.PI/2,a1:0};
+        case'up':   return{cx:sq.x,cy:sq.y+s,a0:0,a1:-Math.PI/2};
+        case'left': return{cx:sq.x+s,cy:sq.y+s,a0:-Math.PI/2,a1:-Math.PI};
+      }
+    }
+
+    const data=buildData();
+    const {x0,y0,x1,y1}=data.bounds;
+    const bw=x1-x0,bh=y1-y0;
+    const SIZE=1024;
+    const sc_=Math.min(SIZE/bw,SIZE/bh)*0.84;
+    const ox=SIZE/2-(x0+bw/2)*sc_;
+    const oy=SIZE/2-(y0+bh/2)*sc_;
+    const px=u=>ox+u*sc_;
+    const py=u=>oy+u*sc_;
+
+    const MAXP=(N-1)*0.9+1;
+    let prog=0,phase='fadein',holdTimer=0,gA=0,lastT=null,particles=[];
+    function reset(){prog=0;phase='fadein';gA=0;holdTimer=0;particles=[];}
+
+    const canvas=document.getElementById('ar-canvas');
+    const ctx=canvas.getContext('2d');
+
+    function tick(t){
+      if(!lastT)lastT=t;
+      const dt=Math.min((t-lastT)/1000,0.05);
+      lastT=t;
+      if(phase==='fadein'){gA=Math.min(1,gA+dt*1.1);prog=Math.min(0.6,prog+dt*1.6);if(gA>=1)phase='draw';}
+      else if(phase==='draw'){prog=Math.min(MAXP,prog+dt*1.4);if(prog>=MAXP){phase='hold';holdTimer=0;}}
+      else if(phase==='hold'){holdTimer+=dt;if(holdTimer>2.5)phase='fadeout';}
+      else if(phase==='fadeout'){gA=Math.max(0,gA-dt*0.9);if(gA<=0)reset();}
+
+      ctx.clearRect(0,0,SIZE,SIZE);
+
+      data.sqs.forEach((sq,i)=>{
+        const rev=Math.max(0,Math.min(1,(prog-i*0.9)/0.9));
+        if(rev<=0)return;
+        const[r,g,b]=RCC[i];
+        const ps=sq.size*sc_,px_=px(sq.x),py_=py(sq.y);
+        ctx.fillStyle=`rgba(${r},${g},${b},${rev*0.42*gA})`;
+        ctx.fillRect(px_,py_,ps,ps);
+        ctx.strokeStyle=`rgba(${r},${g},${b},${Math.min(1,rev*1.4*gA)})`;
+        ctx.lineWidth=2.5;ctx.strokeRect(px_,py_,ps,ps);
+      });
+
+      data.sqs.forEach((sq,i)=>{
+        const ap=Math.max(0,Math.min(1,(prog-i*0.9)/0.9));
+        if(ap<=0)return;
+        const arc=arcOf(sq),r=sq.size*sc_;
+        const cx_=px(arc.cx),cy_=py(arc.cy);
+        const end=arc.a0+(arc.a1-arc.a0)*ap;
+        const[cr,cg,cb]=RCC[i],lw=Math.max(4,12-i*0.7);
+        ctx.beginPath();ctx.arc(cx_,cy_,r,arc.a0,end,true);
+        ctx.strokeStyle=`rgba(${cr},${cg},${cb},${0.95*gA})`;
+        ctx.lineWidth=lw+5;ctx.shadowColor=`rgba(${cr},${cg},${cb},1)`;
+        ctx.shadowBlur=50;ctx.stroke();
+        ctx.beginPath();ctx.arc(cx_,cy_,r,arc.a0,end,true);
+        ctx.strokeStyle=`rgba(255,255,255,${0.4*gA})`;
+        ctx.lineWidth=Math.max(1,lw*0.28);ctx.shadowBlur=0;ctx.stroke();
+        ctx.shadowBlur=0;
+        if(ap<1&&i===Math.min(N-1,Math.floor(prog/0.9))){
+          const tx=cx_+r*Math.cos(end),ty=cy_+r*Math.sin(end);
+          if(Math.random()<0.45)particles.push({x:tx,y:ty,vx:(Math.random()-0.5)*7,vy:(Math.random()-0.5)*7,life:1,size:Math.random()*6+2,col:[cr,cg,cb]});
+          ctx.beginPath();ctx.arc(tx,ty,12,0,Math.PI*2);
+          ctx.fillStyle=`rgba(255,255,220,${gA})`;ctx.shadowColor='rgba(255,230,80,1)';
+          ctx.shadowBlur=50;ctx.fill();ctx.shadowBlur=0;
+        }
+      });
+
+      particles=particles.filter(p=>p.life>0.02);
+      particles.forEach(p=>{
+        p.x+=p.vx;p.y+=p.vy;p.vx*=0.89;p.vy*=0.89;p.life-=0.022;
+        const[r,g,b]=p.col;
+        ctx.beginPath();ctx.arc(p.x,p.y,p.size*p.life,0,Math.PI*2);
+        ctx.fillStyle=`rgba(${r},${g},${b},${p.life*0.6*gA})`;ctx.fill();
+      });
+
+      const plane=document.getElementById('spiral-plane');
+      if(plane?.components?.material?.material?.map)
+        plane.components.material.material.map.needsUpdate=true;
+
+      requestAnimationFrame(tick);
+    }
+
+    // ── Tap to start ───────────────────────────────────────────────────────
+    document.getElementById('tap-start').addEventListener('click', function(){
+      const me = this;
+      navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}})
+        .then(stream=>{
+          // Permission granted — stop this test stream, MindAR will open its own
+          stream.getTracks().forEach(t=>t.stop());
+          me.style.display='none';
+          document.getElementById('overlay').style.display='flex';
+          launchAR();
+        })
+        .catch(()=>{
+          me.querySelector('.sub').textContent='Camera denied. Go to browser settings → allow camera for this site, then reload.';
+        });
+    });
+
+    function launchAR(){
+      // Inject A-Frame scene now that we have permission
+      const sceneEl = document.createElement('a-scene');
+      sceneEl.setAttribute('mindar-image','imageTargetSrc:targets.mind;autoStart:true;uiLoading:no;uiScanning:no;uiError:no;');
+      sceneEl.setAttribute('color-space','sRGB');
+      sceneEl.setAttribute('renderer','colorManagement:true');
+      sceneEl.setAttribute('vr-mode-ui','enabled:false');
+      sceneEl.setAttribute('device-orientation-permission-ui','enabled:false');
+
+      const cam=document.createElement('a-camera');
+      cam.setAttribute('position','0 0 0');
+      cam.setAttribute('look-controls','enabled:false');
+      sceneEl.appendChild(cam);
+
+      const target=document.createElement('a-entity');
+      target.setAttribute('mindar-image-target','targetIndex:0');
+
+      const plane=document.createElement('a-plane');
+      plane.id='spiral-plane';
+      plane.setAttribute('position','0 0 0');
+      plane.setAttribute('width','1');
+      plane.setAttribute('height','1');
+      plane.setAttribute('material','transparent:true;depthWrite:false;side:double;');
+      target.appendChild(plane);
+      sceneEl.appendChild(target);
+
+      document.getElementById('scene-container').appendChild(sceneEl);
+
+      const overlay=document.getElementById('overlay');
+
+      target.addEventListener('targetFound',()=>{
+        overlay.style.opacity='0';
+        reset();
+      });
+      target.addEventListener('targetLost',()=>{
+        overlay.style.opacity='1';
+      });
+
+      sceneEl.addEventListener('loaded',()=>{
+        plane.setAttribute('material','src',canvas);
+        reset();
+        requestAnimationFrame(tick);
+      });
+    }
+
+  })();
+  </script>
+</body>
+</html>
