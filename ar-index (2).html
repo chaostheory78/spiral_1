@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>The Spiral Project — AR</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; width: 100vw; height: 100vh; font-family: 'Courier New', monospace; }
+
+    /* Setup screen shown before targets.mind exists */
+    #setup {
+      position: fixed; inset: 0; z-index: 9999;
+      background: #010208;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 20px; padding: 32px; text-align: center;
+      color: rgba(255,155,20,0.85);
+    }
+    #setup h1 { font-size: 13px; letter-spacing: 0.3em; text-transform: uppercase; color: rgba(255,155,20,0.6); }
+    #setup .phi { font-size: 72px; font-style: italic; color: rgba(255,155,20,0.15); line-height: 1; }
+    #setup .step {
+      background: rgba(255,155,20,0.06);
+      border: 1px solid rgba(255,155,20,0.2);
+      border-radius: 8px; padding: 16px 20px;
+      font-size: 11px; letter-spacing: 0.12em;
+      line-height: 2.2; color: rgba(255,255,255,0.55);
+      max-width: 360px; text-align: left;
+    }
+    #setup .step strong { color: rgba(255,155,20,0.85); display: block; margin-bottom: 4px; font-size: 10px; letter-spacing: 0.25em; }
+    #setup a { color: rgba(100,180,255,0.8); text-decoration: none; }
+    #setup .note { font-size: 9px; color: rgba(255,255,255,0.2); letter-spacing: 0.15em; max-width: 320px; line-height: 2; }
+
+    /* Camera permission tap screen */
+    #tap-start {
+      position: fixed; inset: 0; z-index: 9998;
+      background: #010208;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 28px; cursor: pointer;
+    }
+    #tap-start .phi-tap { font-size: 90px; font-style: italic; color: rgba(255,155,20,0.25); line-height: 1; }
+    #tap-start .tap-btn {
+      border: 1.5px solid rgba(255,155,20,0.5);
+      border-radius: 50px;
+      padding: 16px 40px;
+      font-size: 11px; letter-spacing: 0.3em;
+      color: rgba(255,155,20,0.85);
+      text-transform: uppercase;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    #tap-start .tap-sub {
+      font-size: 9px; letter-spacing: 0.18em;
+      color: rgba(255,255,255,0.2); text-transform: uppercase;
+    }
+
+    /* Scanning overlay */
+    #overlay {
+      position: fixed; inset: 0; z-index: 100;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      pointer-events: none; gap: 20px;
+      transition: opacity 0.5s;
+    }
+    #overlay.hidden { opacity: 0; }
+    .ring {
+      width: 180px; height: 180px; border-radius: 50%;
+      border: 1.5px solid rgba(255,155,20,0.45);
+      animation: pulse 2s ease-in-out infinite;
+      display: flex; align-items: center; justify-content: center;
+      position: relative;
+    }
+    .ring::before {
+      content: ''; position: absolute; inset: 12px;
+      border-radius: 50%; border: 1px solid rgba(255,155,20,0.2);
+    }
+    .ring-label {
+      font-size: 11px; letter-spacing: 0.22em;
+      color: rgba(255,155,20,0.7); text-transform: uppercase;
+    }
+    .phi-big { font-size: 52px; font-style: italic; color: rgba(255,155,20,0.3); }
+    @keyframes pulse {
+      0%,100% { transform: scale(1); border-color: rgba(255,155,20,0.3); }
+      50%      { transform: scale(1.06); border-color: rgba(255,155,20,0.7); }
+    }
+
+    #status {
+      position: fixed; bottom: 20px; left: 0; right: 0;
+      text-align: center; font-size: 9px; letter-spacing: 0.22em;
+      color: rgba(255,255,255,0.2); text-transform: uppercase;
+      z-index: 101; pointer-events: none;
+    }
+  </style>
+
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+</head>
+<body>
+
+  <!-- ── Step-by-step setup screen (hidden once targets.mind is in repo) ── -->
+  <div id="setup">
+    <div class="phi">φ</div>
+    <h1>The Spiral Project — AR Setup</h1>
+
+    <div class="step">
+      <strong>Step 1 — Print the target</strong>
+      Open <code>target.html</code> in your browser and print it.<br>
+      Minimum size: 10cm × 10cm. Flat surface, good lighting.
+    </div>
+
+    <div class="step">
+      <strong>Step 2 — Compile your .mind file (60 seconds)</strong>
+      Go to:<br>
+      <a href="https://hiukim.github.io/mind-ar-js-doc/tools/compile" target="_blank">
+        hiukim.github.io/mind-ar-js-doc/tools/compile
+      </a><br><br>
+      Upload a photo or screenshot of the printed target.<br>
+      Click Compile → download <code>targets.mind</code>
+    </div>
+
+    <div class="step">
+      <strong>Step 3 — Add to repo &amp; push</strong>
+      Put <code>targets.mind</code> in the same folder as this file.<br>
+      Push to GitHub. Enable GitHub Pages.<br>
+      Open the Pages URL on your phone → point at target.
+    </div>
+
+    <div class="note">
+      This screen disappears automatically once targets.mind is detected.<br>
+      HTTPS is required — GitHub Pages provides this.
+    </div>
+  </div>
+
+  <!-- ── Tap to start / camera permission ── -->
+  <div id="tap-start">
+    <div class="phi-tap">φ</div>
+    <div class="tap-btn">Tap to Start AR</div>
+    <div class="tap-sub">Camera access required · Tap allow when prompted</div>
+  </div>
+
+  <!-- ── Scanning overlay (shown when AR is active but target not found) ── -->
+  <div id="overlay">
+    <div class="ring">
+      <div class="phi-big">φ</div>
+    </div>
+    <div class="ring-label">Point at target</div>
+  </div>
+  <div id="status">the spiral project · ar · point camera at the printed target</div>
+
+  <!-- ── Off-screen canvas for spiral animation ── -->
+  <canvas id="ar-canvas" width="1024" height="1024" style="display:none;"></canvas>
+
+  <!-- ── A-Frame AR Scene ── -->
+  <a-scene
+    mindar-image="imageTargetSrc: targets.mind; autoStart: true; uiLoading: no; uiScanning: no; uiError: no;"
+    color-space="sRGB"
+    renderer="colorManagement: true"
+    vr-mode-ui="enabled: false"
+    device-orientation-permission-ui="enabled: false">
+
+    <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+
+    <a-entity mindar-image-target="targetIndex: 0">
+      <a-plane
+        id="spiral-plane"
+        position="0 0 0"
+        width="1" height="1"
+        material="transparent: true; depthWrite: false; side: double; src: #ar-canvas;">
+      </a-plane>
+    </a-entity>
+  </a-scene>
+
+  <script>
+  (function(){
+    // ── Tap to start — triggers camera permission prompt ─────────────────
+    const tapScreen = document.getElementById('tap-start');
+    const scene     = document.querySelector('a-scene');
+    scene.setAttribute('mindar-image', 'imageTargetSrc: targets.mind; autoStart: false; uiLoading: no; uiScanning: no; uiError: no;');
+
+    tapScreen.addEventListener('click', () => {
+      // Request camera explicitly so browser shows the allow prompt
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+        .then(() => {
+          tapScreen.style.display = 'none';
+          // Now start MindAR
+          scene.setAttribute('mindar-image', 'imageTargetSrc: targets.mind; autoStart: true; uiLoading: no; uiScanning: no; uiError: no;');
+          scene.components['mindar-image'] && scene.components['mindar-image'].start && scene.components['mindar-image'].start();
+        })
+        .catch(() => {
+          tapScreen.querySelector('.tap-sub').textContent = 'Camera denied — go to browser settings and allow camera';
+        });
+    });
+
+    // ── Check if targets.mind exists — hide setup screen if so ────────────
+    fetch('targets.mind', {method:'HEAD'})
+      .then(r => { if(r.ok) document.getElementById('setup').style.display='none'; })
+      .catch(()=>{});
+
+    // ── Spiral colours — resistor colour code (vivid) ─────────────────────
+    const RCC = [
+      [30,  30,  40 ],  // 0 Black
+      [180, 80,  10 ],  // 1 Brown
+      [255, 20,  20 ],  // 2 Red
+      [255, 140, 0  ],  // 3 Orange
+      [255, 245, 0  ],  // 4 Yellow
+      [0,   230, 80 ],  // 5 Green
+      [30,  100, 255],  // 6 Blue
+      [180, 0,   255],  // 7 Violet
+      [0,   240, 255],  // 8 Cyan
+      [255, 0,   200],  // 9 Magenta
+    ];
+
+    // ── Build Fibonacci layout ────────────────────────────────────────────
+    const N = 10;
+    function buildData(){
+      const fibs=[1,1];
+      for(let i=2;i<N;i++) fibs.push(fibs[i-1]+fibs[i-2]);
+      const DIRS=['down','right','up','left'];
+      const sqs=[{x:0,y:0,size:1,dir:'down'},{x:1,y:0,size:1,dir:'right'}];
+      let x0=0,y0=0,x1=2,y1=1;
+      for(let i=2;i<N;i++){
+        const f=fibs[i],d=DIRS[i%4],sq={size:f,dir:d};
+        if(d==='up'   ){sq.x=x0;   sq.y=y0-f; y0-=f;}
+        if(d==='left' ){sq.x=x0-f; sq.y=y0;   x0-=f;}
+        if(d==='down' ){sq.x=x0;   sq.y=y1;   y1+=f;}
+        if(d==='right'){sq.x=x1;   sq.y=y0;   x1+=f;}
+        sqs.push(sq);
+      }
+      return{sqs,bounds:{x0,y0,x1,y1}};
+    }
+    function arcOf(sq){
+      const s=sq.size;
+      switch(sq.dir){
+        case'down':  return{cx:sq.x+s,cy:sq.y,   a0:Math.PI,    a1:Math.PI/2};
+        case'right': return{cx:sq.x,  cy:sq.y,   a0:Math.PI/2,  a1:0};
+        case'up':    return{cx:sq.x,  cy:sq.y+s, a0:0,          a1:-Math.PI/2};
+        case'left':  return{cx:sq.x+s,cy:sq.y+s, a0:-Math.PI/2, a1:-Math.PI};
+      }
+    }
+
+    const data = buildData();
+    const {x0,y0,x1,y1} = data.bounds;
+    const bw=x1-x0, bh=y1-y0;
+    const SIZE=1024;
+    const sc_  = Math.min(SIZE/bw, SIZE/bh)*0.84;
+    const ox   = SIZE/2-(x0+bw/2)*sc_;
+    const oy   = SIZE/2-(y0+bh/2)*sc_;
+    const px   = u=>ox+u*sc_;
+    const py   = u=>oy+u*sc_;
+
+    // ── Animation state ───────────────────────────────────────────────────
+    const MAXP = (N-1)*0.9+1;
+    let prog=0, phase='fadein', holdTimer=0, gA=0, lastT=null, particles=[];
+    function reset(){prog=0;phase='fadein';gA=0;holdTimer=0;particles=[];}
+    reset();
+
+    const canvas = document.getElementById('ar-canvas');
+    const ctx    = canvas.getContext('2d');
+    const overlay= document.getElementById('overlay');
+
+    // ── Target found / lost ───────────────────────────────────────────────
+    document.querySelector('[mindar-image-target]').addEventListener('targetFound', ()=>{
+      overlay.classList.add('hidden');
+    });
+    document.querySelector('[mindar-image-target]').addEventListener('targetLost', ()=>{
+      overlay.classList.remove('hidden');
+      reset();
+    });
+
+    // ── Draw loop ─────────────────────────────────────────────────────────
+    function tick(t){
+      if(!lastT) lastT=t;
+      const dt=Math.min((t-lastT)/1000, 0.05);
+      lastT=t;
+
+      // Phase transitions
+      if     (phase==='fadein' ){ gA=Math.min(1,gA+dt*1.1); prog=Math.min(0.6,prog+dt*1.6); if(gA>=1) phase='draw'; }
+      else if(phase==='draw'   ){ prog=Math.min(MAXP,prog+dt*1.4); if(prog>=MAXP){phase='hold';holdTimer=0;} }
+      else if(phase==='hold'   ){ holdTimer+=dt; if(holdTimer>2.5) phase='fadeout'; }
+      else if(phase==='fadeout'){ gA=Math.max(0,gA-dt*0.9); if(gA<=0) reset(); }
+
+      // Clear
+      ctx.clearRect(0,0,SIZE,SIZE);
+
+      // Blocks
+      data.sqs.forEach((sq,i)=>{
+        const rev=Math.max(0,Math.min(1,(prog-i*0.9)/0.9));
+        if(rev<=0) return;
+        const[r,g,b]=RCC[i];
+        const ps=sq.size*sc_;
+        const px_=px(sq.x), py_=py(sq.y);
+        ctx.fillStyle=`rgba(${r},${g},${b},${rev*0.42*gA})`;
+        ctx.fillRect(px_,py_,ps,ps);
+        ctx.strokeStyle=`rgba(${r},${g},${b},${Math.min(1,rev*1.4*gA)})`;
+        ctx.lineWidth=2.5;
+        ctx.strokeRect(px_,py_,ps,ps);
+      });
+
+      // Spiral arcs
+      data.sqs.forEach((sq,i)=>{
+        const ap=Math.max(0,Math.min(1,(prog-i*0.9)/0.9));
+        if(ap<=0) return;
+        const arc=arcOf(sq);
+        const r=sq.size*sc_;
+        const cx_=px(arc.cx), cy_=py(arc.cy);
+        const end=arc.a0+(arc.a1-arc.a0)*ap;
+        const[cr,cg,cb]=RCC[i];
+        const lw=Math.max(4,12-i*0.7);
+
+        // Glow
+        ctx.beginPath(); ctx.arc(cx_,cy_,r,arc.a0,end,true);
+        ctx.strokeStyle=`rgba(${cr},${cg},${cb},${0.95*gA})`;
+        ctx.lineWidth=lw+5;
+        ctx.shadowColor=`rgba(${cr},${cg},${cb},1)`;
+        ctx.shadowBlur=50; ctx.stroke();
+
+        // Core
+        ctx.beginPath(); ctx.arc(cx_,cy_,r,arc.a0,end,true);
+        ctx.strokeStyle=`rgba(255,255,255,${0.4*gA})`;
+        ctx.lineWidth=Math.max(1,lw*0.28);
+        ctx.shadowBlur=0; ctx.stroke();
+        ctx.shadowBlur=0;
+
+        // Tip
+        if(ap<1 && i===Math.min(N-1,Math.floor(prog/0.9))){
+          const tx=cx_+r*Math.cos(end), ty=cy_+r*Math.sin(end);
+          if(Math.random()<0.45) particles.push({
+            x:tx,y:ty,vx:(Math.random()-0.5)*7,vy:(Math.random()-0.5)*7,
+            life:1,size:Math.random()*6+2,col:[cr,cg,cb]
+          });
+          ctx.beginPath(); ctx.arc(tx,ty,12,0,Math.PI*2);
+          ctx.fillStyle=`rgba(255,255,220,${gA})`;
+          ctx.shadowColor='rgba(255,230,80,1)'; ctx.shadowBlur=50;
+          ctx.fill(); ctx.shadowBlur=0;
+        }
+      });
+
+      // Particles
+      particles=particles.filter(p=>p.life>0.02);
+      particles.forEach(p=>{
+        p.x+=p.vx; p.y+=p.vy; p.vx*=0.89; p.vy*=0.89; p.life-=0.022;
+        const[r,g,b]=p.col;
+        ctx.beginPath(); ctx.arc(p.x,p.y,p.size*p.life,0,Math.PI*2);
+        ctx.fillStyle=`rgba(${r},${g},${b},${p.life*0.6*gA})`; ctx.fill();
+      });
+
+      // Force texture update
+      const plane=document.getElementById('spiral-plane');
+      if(plane?.components?.material?.material?.map)
+        plane.components.material.material.map.needsUpdate=true;
+
+      requestAnimationFrame(tick);
+    }
+
+    // Start after A-Frame is ready
+    document.querySelector('a-scene').addEventListener('loaded', ()=>{
+      document.getElementById('spiral-plane').setAttribute('material','src',canvas);
+      requestAnimationFrame(tick);
+    });
+  })();
+  </script>
+</body>
+</html>
